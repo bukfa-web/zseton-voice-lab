@@ -1,37 +1,67 @@
 import streamlit as st
 from streamlit_mic_recorder import mic_recorder
+from openai import OpenAI
+import os
 
-st.title("🎙️ Zseton Hangvezérlés Teszt")
-st.write("Ez a felület csak azt teszteli, hogy működik-e a mikrofonod.")
+# 1. API Kulcs betöltése a titkos tárolóból
+if "OPENAI_API_KEY" in st.secrets:
+    client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+else:
+    st.error("Nincs beállítva az OpenAI API kulcs a Secrets-ben!")
+    st.stop()
 
-st.info("Kattints a mikrofon ikonra a felvételhez. Ha kész, kattints újra a leállításhoz.")
+st.title("🎙️ Zseton Hang -> Szöveg Teszt")
+st.write("Mondj valamit 'pókeresen' (pl. 'Peti hív 500-at'), és megnézzük, mit ért belőle a gép!")
 
-# Mikrofon komponens
-# A 'key' paraméter fontos, hogy a Streamlit meg tudja különböztetni az eseményeket
+# 2. Hangfelvétel
 audio = mic_recorder(
-    start_prompt="Felvétel indítása",
-    stop_prompt="Felvétel leállítása",
+    start_prompt="🎤 Felvétel indítása",
+    stop_prompt="⏹️ Leállítás",
     just_once=False,
     use_container_width=True,
-    format="webm", # A webm formátum a legkompatibilisebb a böngészőkkel
+    format="webm",
     key="recorder"
 )
 
 st.divider()
 
 if audio:
-    st.success("✅ Hang rögzítve!")
+    st.info("Hang feldolgozása... ⏳")
     
-    # Kiírjuk a technikai infókat (hogy lássuk, kapunk-e adatot)
-    st.json({
-        "Minta vételezés (sample rate)": audio['sample_rate'],
-        "Adat mérete (bájt)": len(audio['bytes']),
-        "Formátum": "webm"
-    })
+    # 3. Hangfájl mentése átmenetileg (a Whisper API fájlt vár)
+    # A webm formátumot a Whisper szereti
+    audio_file_path = "temp_audio.webm"
+    with open(audio_file_path, "wb") as f:
+        f.write(audio['bytes'])
 
-    st.write("🔊 Visszahallgatás:")
-    st.audio(audio['bytes'])
-    
-    # Itt fogjuk majd később elküldeni a Whispernek az 'audio['bytes']'-t
+    # 4. Küldés a Whispernek
+    try:
+        # Itt nyitjuk meg a fájlt olvasásra
+        with open(audio_file_path, "rb") as audio_file:
+            transcript = client.audio.transcriptions.create(
+                model="whisper-1", 
+                file=audio_file,
+                language="hu", # Magyar nyelv kényszerítése
+                # Ez a varázslat! Itt tanítjuk a szlenget:
+                prompt="Póker játék, zsetonok, hívás, all-in, passz, Peti, Zoli, Kata, vak emelés." 
+            )
+        
+        # 5. Eredmény kiírása
+        st.success("✅ Siker!")
+        st.subheader("Ezt értettem:")
+        st.code(transcript.text, language="text")
+        
+        # Opcionális: nyers JSON (ha később kellene)
+        with st.expander("Technikai részletek"):
+            st.json(transcript.model_dump())
+
+    except Exception as e:
+        st.error(f"Hiba történt a felismerés közben: {e}")
+        
+    finally:
+        # Takarítás: töröljük az átmeneti fájlt
+        if os.path.exists(audio_file_path):
+            os.remove(audio_file_path)
+
 else:
-    st.warning("Nincs rögzített hanganyag.")
+    st.write("Még nincs felvétel.")
